@@ -5,9 +5,8 @@ import subprocess
 import tempfile
 import shutil
 import json
-import asyncio
-from flask import Flask, request
 from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor
 import yt_dlp
 from dotenv import load_dotenv
 
@@ -17,16 +16,6 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
     print("❌ Ошибка: BOT_TOKEN не установлен!")
     sys.exit(1)
-
-# Автоматически определяем URL из Railway
-RAILWAY_URL = os.getenv('RAILWAY_PUBLIC_DOMAIN')
-if RAILWAY_URL:
-    WEBHOOK_URL = f"https://{RAILWAY_URL}"
-else:
-    WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://your-app.railway.app')
-
-WEBHOOK_PATH = '/webhook'
-PORT = int(os.getenv('PORT', 8080))
 
 # Настройки качества
 QUALITY_PRESETS = {
@@ -40,20 +29,11 @@ DEFAULT_QUALITY = "720p"
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Инициализация бота
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# Хранилище пользовательских данных
 user_videos = {}
 user_audios = {}
-
-# Flask приложение
-app = Flask(__name__)
-
-print(f"🤖 BeatSync Bot запускается...")
-print(f"📡 URL: {WEBHOOK_URL}")
-print(f"📡 Порт: {PORT}")
 
 # ========== ФУНКЦИИ ==========
 def download_video(url, quality_key):
@@ -391,27 +371,7 @@ async def process_files(message: types.Message, user_id: str):
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
 
-# ========== ВЕБХУК ==========
-@app.route(WEBHOOK_PATH, methods=['POST'])
-def webhook():
-    """Обрабатывает входящие обновления"""
-    update = types.Update(**request.json)
-    asyncio.run(dp.process_update(update))
-    return 'ok', 200
-
-@app.route('/')
-def index():
-    return 'Бот работает!', 200
-
 # ========== ЗАПУСК ==========
 if __name__ == '__main__':
-    print(f"🤖 BeatSync Bot запускается на порту {PORT}")
-    print(f"📡 Вебхук URL: {WEBHOOK_URL}{WEBHOOK_PATH}")
-    
-    # Устанавливаем вебхук
-    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-    asyncio.run(bot.set_webhook(webhook_url))
-    print(f"✅ Вебхук установлен")
-    
-    # Запускаем Flask
-    app.run(host='0.0.0.0', port=PORT)
+    print("🤖 BeatSync Clip Bot запущен в режиме polling")
+    executor.start_polling(dp, skip_updates=True)
