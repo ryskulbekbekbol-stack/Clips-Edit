@@ -81,32 +81,29 @@ def download_method3(url, temp_dir):
     return None, None
 
 def download_video(url):
-    """Пробует все три метода по очереди"""
+    """Пробует все три метода"""
     temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
     
     # Метод 1
     video_path, title = download_method1(url, temp_dir)
     if video_path:
-        print("✅ Метод 1 сработал")
         return video_path, title, temp_dir
     
     # Метод 2
     video_path, title = download_method2(url, temp_dir)
     if video_path:
-        print("✅ Метод 2 сработал")
         return video_path, title, temp_dir
     
     # Метод 3
     video_path, title = download_method3(url, temp_dir)
     if video_path:
-        print("✅ Метод 3 сработал")
         return video_path, title, temp_dir
     
     shutil.rmtree(temp_dir)
     return None, None, None
 
 def get_duration(file_path):
-    """Длительность видео/аудио"""
+    """Длительность"""
     cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
            '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -116,7 +113,7 @@ def get_duration(file_path):
         return 0
 
 def create_beats(duration):
-    """Создает биты (просто равномерно)"""
+    """Биты"""
     beats = []
     interval = 0.5
     current = 0
@@ -125,12 +122,11 @@ def create_beats(duration):
         current += interval
     return beats
 
-def cut_video(video_path, beats, output_dir, clip_duration):
+def cut_video(video_path, beats, output_dir):
     """Режет видео"""
     clips = []
     video_duration = get_duration(video_path)
     
-    # Ограничиваем биты длительностью видео
     valid_beats = [b for b in beats if b < video_duration]
     valid_beats = valid_beats[:min(len(valid_beats), 30)]
     
@@ -161,7 +157,7 @@ def cut_video(video_path, beats, output_dir, clip_duration):
     return clips
 
 def merge_clips(clips, audio_path, output_path, clip_duration):
-    """Склеивает клипы и накладывает аудио"""
+    """Склеивает"""
     if not clips:
         return None
     
@@ -210,12 +206,11 @@ def merge_clips(clips, audio_path, output_path, clip_duration):
         os.remove(list_file)
         return output_path
         
-    except Exception as e:
-        print(f"Ошибка склейки: {e}")
+    except:
         return None
 
 def compress_video(input_path):
-    """Сжимает видео если надо"""
+    """Сжатие"""
     size = os.path.getsize(input_path) / 1024 / 1024
     if size <= 45:
         return input_path
@@ -241,38 +236,38 @@ def compress_video(input_path):
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.reply(
-        "🎬 **Бот для нарезки**\n\n"
-        "/yt <ссылка> <секунд> - скачать видео\n"
-        "Потом отправь аудио"
+        "🎬 **Бот**\n\n"
+        "/yt <ссылка> <секунд>\n"
+        "Потом аудио"
     )
 
 @dp.message_handler(commands=['yt'])
 async def yt_command(message: types.Message):
     args = message.text.split()
     if len(args) < 3:
-        await message.reply("❌ Формат: /yt ссылка секунд")
+        await message.reply("❌ /yt ссылка секунд")
         return
     
     url = args[1]
     try:
         clip_duration = int(args[2])
         if clip_duration > 60:
-            await message.reply("❌ Максимум 60 секунд")
+            await message.reply("❌ Макс 60 сек")
             return
     except:
-        await message.reply("❌ Секунды должны быть числом")
+        await message.reply("❌ Число нужно")
         return
     
     user_id = str(message.from_user.id)
-    msg = await message.reply("⏬ Качаю видео...")
+    msg = await message.reply("⏬ Качаю...")
     
     video_path, title, temp_dir = download_video(url)
     
     if not video_path:
-        await msg.edit_text("❌ Не удалось скачать")
+        await msg.edit_text("❌ Не скачалось")
         return
     
-    await message.reply(f"✅ Видео скачано")
+    await message.reply("✅ Видео есть")
     
     user_videos[user_id] = {
         'path': video_path,
@@ -281,10 +276,10 @@ async def yt_command(message: types.Message):
     }
     
     if user_id in user_audios:
-        await msg.edit_text("✅ Есть видео и аудио, обрабатываю...")
+        await msg.edit_text("✅ Есть всё, делаю...")
         await process_files(message, user_id)
     else:
-        await msg.edit_text("✅ Видео скачано! Теперь отправь аудио")
+        await msg.edit_text("✅ Видео есть, кидай аудио")
 
 @dp.message_handler(content_types=['audio'])
 async def handle_audio(message: types.Message):
@@ -302,55 +297,49 @@ async def handle_audio(message: types.Message):
     }
     
     if user_id in user_videos:
-        await msg.edit_text("✅ Есть видео и аудио, обрабатываю...")
+        await msg.edit_text("✅ Есть всё, делаю...")
         await process_files(message, user_id)
     else:
-        await msg.edit_text("✅ Аудио скачано! Теперь отправь /yt")
+        await msg.edit_text("✅ Аудио есть, кидай /yt")
 
 async def process_files(message: types.Message, user_id: str):
     video_info = user_videos[user_id]
     audio_info = user_audios[user_id]
     clip_duration = video_info['duration']
     
-    msg = await message.reply("🎵 Создаю биты...")
+    msg = await message.reply("🎵 Делаю...")
     
     beats = create_beats(clip_duration)
     
     if len(beats) < 2:
-        await msg.edit_text("⚠️ Беру простую нарезку")
         beats = [0, clip_duration]
     
-    await msg.edit_text(f"✂️ Режу видео...")
+    await msg.edit_text(f"✂️ Режу...")
     
     work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-    clips = cut_video(video_info['path'], beats, work_dir, clip_duration)
+    clips = cut_video(video_info['path'], beats, work_dir)
     
     if not clips:
-        await msg.edit_text("❌ Не удалось нарезать")
+        await msg.edit_text("❌ Не порезалось")
         return
     
-    await msg.edit_text(f"🔄 Склеиваю {len(clips)} кусков...")
+    await msg.edit_text(f"🔄 Склеиваю...")
     
     output_path = os.path.join(work_dir, 'final.mp4')
     result = merge_clips(clips, audio_info['path'], output_path, clip_duration)
     
     if not result:
-        await msg.edit_text("❌ Не удалось склеить")
+        await msg.edit_text("❌ Не склеилось")
         return
     
-    # Сжимаем если надо
     result = compress_video(result)
     size = os.path.getsize(result) / 1024 / 1024
     
-    await msg.edit_text("✅ Готово! Отправляю...")
+    await msg.edit_text("✅ Готово!")
     
     with open(result, 'rb') as f:
-        await message.reply_video(
-            f,
-            caption=f"🎬 Готово!\n⏱️ {clip_duration} сек\n✂️ {len(clips)} фрагментов\n💾 {size:.1f} MB"
-        )
+        await message.reply_video(f, caption=f"✅ {clip_duration} сек")
     
-    # Чистим
     shutil.rmtree(work_dir)
     shutil.rmtree(video_info['temp_dir'])
     shutil.rmtree(audio_info['temp_dir'])
@@ -358,5 +347,5 @@ async def process_files(message: types.Message, user_id: str):
     del user_audios[user_id]
 
 if __name__ == '__main__':
-    print("🤖 Бот запущен (3 метода)")
+    print("🤖 Запущен")
     executor.start_polling(dp, skip_updates=True)
