@@ -1,2 +1,4 @@
+aiohttp==3.8.6
 aiogram==2.23.1
 yt-dlp
+python-dotenv==1.0.0
