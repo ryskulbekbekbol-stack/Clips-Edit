@@ -6,6 +6,7 @@ import tempfile
 import shutil
 import json
 import re
+import time
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 import yt_dlp
@@ -24,7 +25,7 @@ dp = Dispatcher(bot)
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Настройки качества (ПОЛНАЯ ПОДДЕРЖКА 4K)
+# Настройки качества
 QUALITY_PRESETS = {
     "360p": {"height": 360, "crf": 23, "desc": "360p"},
     "480p": {"height": 480, "crf": 22, "desc": "480p"},
@@ -39,24 +40,96 @@ DEFAULT_QUALITY = "1080p"
 user_videos = {}
 user_audios = {}
 
-# ========== ФУНКЦИИ ==========
+# ========== ГАРАНТИРОВАННОЕ СКАЧИВАНИЕ ==========
 def download_video(url, quality_key):
-    """Скачивает видео с YouTube в указанном качестве"""
-    temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+    """
+    Супер-функция для скачивания видео с YouTube
+    Пробует 3 разных метода
+    """
     quality = QUALITY_PRESETS[quality_key]
     target_height = quality["height"]
     
-    output = os.path.join(temp_dir, 'video.mp4')
+    # МЕТОД 1: Самый современный подход
+    print(f"📥 Метод 1: Пробую скачать {url}")
+    result = method1_download(url, target_height)
+    if result[0]:
+        return result
     
-    # Формат для скачивания с учётом качества
+    # МЕТОД 2: Запасной метод
+    print(f"📥 Метод 2: Пробую запасной способ")
+    result = method2_download(url, target_height)
+    if result[0]:
+        return result
+    
+    # МЕТОД 3: Минимальное качество (всё или ничего)
+    print(f"📥 Метод 3: Пробую минимальное качество")
+    result = method3_download(url)
+    if result[0]:
+        return result
+    
+    return None, None, None
+
+def method1_download(url, target_height):
+    """Основной метод с современными настройками"""
+    temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+    output = os.path.join(temp_dir, 'video.%(ext)s')
+    
     ydl_opts = {
         'format': f'bestvideo[height<={target_height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={target_height}][ext=mp4]',
         'outtmpl': output,
         'merge_output_format': 'mp4',
         'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,
+        'ignoreerrors': True,
+        
+        # Обход блокировок
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['android', 'web', 'ios', 'tv', 'web_embedded'],
+                'skip': ['hls', 'dash'],
+            }
+        },
+        
+        # Дополнительные параметры
+        'geo_bypass': True,
+        'geo_bypass_country': 'US',
+        'age_limit': 99,
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if info:
+                # Ищем скачанный файл
+                filename = ydl.prepare_filename(info)
+                base = filename.rsplit('.', 1)[0]
+                
+                # Проверяем разные расширения
+                for ext in ['.mp4', '.webm', '.mkv']:
+                    if os.path.exists(base + ext):
+                        file_size = os.path.getsize(base + ext) / 1024 / 1024
+                        print(f"✅ Метод 1 успешен: {file_size:.1f} MB")
+                        return base + ext, info.get('title', 'video'), temp_dir
+                        
+    except Exception as e:
+        print(f"❌ Метод 1 ошибка: {e}")
+    
+    shutil.rmtree(temp_dir)
+    return None, None, None
+
+def method2_download(url, target_height):
+    """Запасной метод - только видео без звука"""
+    temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+    output = os.path.join(temp_dir, 'video.mp4')
+    
+    ydl_opts = {
+        'format': f'bestvideo[height<={target_height}][ext=mp4]',
+        'outtmpl': output,
+        'quiet': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android']
             }
         }
     }
@@ -64,21 +137,41 @@ def download_video(url, quality_key):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            # Проверяем, что файл существует
             if os.path.exists(output):
+                file_size = os.path.getsize(output) / 1024 / 1024
+                print(f"✅ Метод 2 успешен: {file_size:.1f} MB")
                 return output, info.get('title', 'video'), temp_dir
-            else:
-                # Пробуем найти файл с другим расширением
-                base = output.replace('.mp4', '')
-                for ext in ['.mp4', '.webm', '.mkv']:
-                    if os.path.exists(base + ext):
-                        return base + ext, info.get('title', 'video'), temp_dir
     except Exception as e:
-        print(f"Ошибка скачивания: {e}")
+        print(f"❌ Метод 2 ошибка: {e}")
     
     shutil.rmtree(temp_dir)
     return None, None, None
 
+def method3_download(url):
+    """Метод 3 - минимальное качество"""
+    temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+    output = os.path.join(temp_dir, 'video.mp4')
+    
+    ydl_opts = {
+        'format': 'best[height<=360]',
+        'outtmpl': output,
+        'quiet': True,
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if os.path.exists(output):
+                file_size = os.path.getsize(output) / 1024 / 1024
+                print(f"✅ Метод 3 успешен: {file_size:.1f} MB")
+                return output, info.get('title', 'video'), temp_dir
+    except Exception as e:
+        print(f"❌ Метод 3 ошибка: {e}")
+    
+    shutil.rmtree(temp_dir)
+    return None, None, None
+
+# ========== ОСТАЛЬНЫЕ ФУНКЦИИ ==========
 def get_duration(file_path):
     """Получает длительность видео/аудио"""
     cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
@@ -106,9 +199,9 @@ def get_video_info(video_path):
     return None
 
 def detect_beats(audio_path):
-    """Определяет биты в аудио через анализ громкости"""
+    """Определяет биты в аудио"""
     try:
-        # Конвертируем в WAV для анализа
+        # Конвертируем в WAV
         temp_wav = audio_path + '.wav'
         convert_cmd = [
             'ffmpeg', '-i', audio_path,
@@ -117,20 +210,10 @@ def detect_beats(audio_path):
         ]
         subprocess.run(convert_cmd, check=True, capture_output=True)
         
-        # Получаем длительность
         duration = get_duration(audio_path)
-        
-        # Анализируем громкость
-        volume_cmd = [
-            'ffmpeg', '-i', temp_wav,
-            '-af', 'volumedetect',
-            '-f', 'null', '-'
-        ]
-        result = subprocess.run(volume_cmd, capture_output=True, text=True)
         os.remove(temp_wav)
         
-        # Создаём биты на основе BPM
-        # Определяем примерный BPM (120 по умолчанию)
+        # Создаём биты (120 BPM)
         bpm = 120
         interval = 60.0 / bpm
         
@@ -140,7 +223,7 @@ def detect_beats(audio_path):
             beats.append(current)
             current += interval
         
-        print(f"Создано {len(beats)} битов (BPM: {bpm})")
+        print(f"Создано {len(beats)} битов")
         return beats
         
     except Exception as e:
@@ -148,7 +231,7 @@ def detect_beats(audio_path):
         return fallback_beats(audio_path)
 
 def fallback_beats(audio_path):
-    """Запасной вариант - равномерная сетка"""
+    """Запасной вариант"""
     duration = get_duration(audio_path)
     beats = []
     current = 0
@@ -158,12 +241,11 @@ def fallback_beats(audio_path):
     return beats
 
 def cut_video(video_path, beats, output_dir, quality_key, multiplier=2):
-    """Нарезает видео по битам с заданным качеством"""
+    """Нарезает видео"""
     clips = []
     duration = get_duration(video_path)
     quality = QUALITY_PRESETS[quality_key]
     
-    # Обрезаем биты по длительности видео
     valid_beats = [b for b in beats if b < duration]
     
     if len(valid_beats) < 2:
@@ -178,7 +260,6 @@ def cut_video(video_path, beats, output_dir, quality_key, multiplier=2):
             
         output = os.path.join(output_dir, f"clip_{i:03d}.mp4")
         
-        # FFmpeg команда с перекодированием в нужное качество
         cmd = [
             'ffmpeg', '-i', video_path,
             '-ss', str(start),
@@ -195,14 +276,13 @@ def cut_video(video_path, beats, output_dir, quality_key, multiplier=2):
         try:
             subprocess.run(cmd, check=True, capture_output=True)
             clips.append(output)
-            print(f"Создан клип {i}: {start:.2f}-{end:.2f}")
         except Exception as e:
             print(f"Ошибка нарезки: {e}")
     
     return clips
 
 def merge_clips(clips, audio_path, output_path):
-    """Склеивает клипы и накладывает аудио"""
+    """Склеивает клипы"""
     if not clips:
         return None
     
@@ -250,10 +330,6 @@ def merge_clips(clips, audio_path, output_path):
 async def start(message: types.Message):
     await message.reply(
         "🎬 **BeatSync 4K Bot**\n\n"
-        "**Доступные качества:**\n"
-        "• 360p, 480p, 720p\n"
-        "• 1080p, 1440p (2K)\n"
-        "• 2160p (4K)\n\n"
         "**Команды:**\n"
         "/quality <качество> - установить качество\n"
         "/multiplier <1-5> - множитель битов\n"
@@ -307,24 +383,17 @@ async def yt_command(message: types.Message):
         return
     
     user_id = str(message.from_user.id)
-    
-    # Получаем настройки пользователя
-    quality = DEFAULT_QUALITY
-    multiplier = 2
-    
-    if user_id in user_videos:
-        quality = user_videos[user_id].get('quality', DEFAULT_QUALITY)
-        multiplier = user_videos[user_id].get('multiplier', 2)
+    quality = user_videos.get(user_id, {}).get('quality', DEFAULT_QUALITY)
+    multiplier = user_videos.get(user_id, {}).get('multiplier', 2)
     
     msg = await message.reply(f"⏬ Скачиваю видео в {QUALITY_PRESETS[quality]['desc']}...")
     
     video_path, title, temp_dir = download_video(args[1], quality)
     
     if not video_path:
-        await msg.edit_text("❌ Не удалось скачать видео")
+        await msg.edit_text("❌ Не удалось скачать видео. Попробуй другую ссылку.")
         return
     
-    # Получаем информацию о видео
     info = get_video_info(video_path)
     resolution = f"{info['width']}x{info['height']}" if info else "неизвестно"
     duration = get_duration(video_path)
@@ -336,12 +405,10 @@ async def yt_command(message: types.Message):
         f"Разрешение: {resolution}"
     )
     
-    # Сохраняем видео
     if user_id not in user_videos:
         user_videos[user_id] = {}
     user_videos[user_id]['video'] = {'path': video_path, 'temp_dir': temp_dir}
     
-    # Проверяем, есть ли аудио
     if user_id in user_audios and 'audio' in user_audios[user_id]:
         await msg.edit_text("✅ Есть видео и аудио! Обрабатываю...")
         await process_files(message, user_id, quality, multiplier)
@@ -358,20 +425,13 @@ async def handle_audio(message: types.Message):
     audio_path = os.path.join(temp_dir, 'audio.mp3')
     await bot.download_file(file.file_path, audio_path)
     
-    # Получаем настройки пользователя
-    quality = DEFAULT_QUALITY
-    multiplier = 2
+    quality = user_videos.get(user_id, {}).get('quality', DEFAULT_QUALITY)
+    multiplier = user_videos.get(user_id, {}).get('multiplier', 2)
     
-    if user_id in user_videos:
-        quality = user_videos[user_id].get('quality', DEFAULT_QUALITY)
-        multiplier = user_videos[user_id].get('multiplier', 2)
-    
-    # Сохраняем аудио
     if user_id not in user_audios:
         user_audios[user_id] = {}
     user_audios[user_id]['audio'] = {'path': audio_path, 'temp_dir': temp_dir}
     
-    # Проверяем, есть ли видео
     if user_id in user_videos and 'video' in user_videos[user_id]:
         await msg.edit_text("✅ Есть аудио и видео! Обрабатываю...")
         await process_files(message, user_id, quality, multiplier)
@@ -379,7 +439,6 @@ async def handle_audio(message: types.Message):
         await msg.edit_text("✅ Аудио скачано! Теперь отправь /yt с ссылкой")
 
 async def process_files(message: types.Message, user_id: str, quality: str, multiplier: int):
-    """Обрабатывает видео и аудио"""
     try:
         video_info = user_videos[user_id]['video']
         audio_info = user_audios[user_id]['audio']
@@ -388,20 +447,14 @@ async def process_files(message: types.Message, user_id: str, quality: str, mult
         audio_path = audio_info['path']
         
         msg = await message.reply("🎵 Анализирую биты в музыке...")
-        
-        # Определяем биты
         beats = detect_beats(audio_path)
         
         if len(beats) < 2:
             await msg.edit_text("❌ Не удалось определить биты")
             return
         
-        await msg.edit_text(f"✂️ Нарезаю видео в {QUALITY_PRESETS[quality]['desc']}...")
-        
-        # Создаём рабочую папку
+        await msg.edit_text(f"✂️ Нарезаю видео...")
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-        
-        # Нарезаем видео
         clips = cut_video(video_path, beats, work_dir, quality, multiplier)
         
         if not clips:
@@ -410,8 +463,6 @@ async def process_files(message: types.Message, user_id: str, quality: str, mult
             return
         
         await msg.edit_text(f"🔄 Склеиваю {len(clips)} фрагментов...")
-        
-        # Склеиваем
         output_path = os.path.join(work_dir, 'final.mp4')
         result = merge_clips(clips, audio_path, output_path)
         
@@ -420,12 +471,9 @@ async def process_files(message: types.Message, user_id: str, quality: str, mult
             shutil.rmtree(work_dir)
             return
         
-        # Получаем размер файла
         size = os.path.getsize(result) / 1024 / 1024
         
         await msg.edit_text("✅ Готово! Отправляю...")
-        
-        # Отправляем результат
         with open(result, 'rb') as f:
             await message.reply_video(
                 f,
@@ -438,20 +486,17 @@ async def process_files(message: types.Message, user_id: str, quality: str, mult
                 )
             )
         
-        # Очистка
         shutil.rmtree(work_dir)
         shutil.rmtree(video_info['temp_dir'])
         shutil.rmtree(audio_info['temp_dir'])
         
-        # Удаляем из памяти
         del user_videos[user_id]['video']
         del user_audios[user_id]['audio']
         
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
 
-# ========== ЗАПУСК ==========
 if __name__ == '__main__':
     print("🤖 BeatSync 4K Bot запущен")
-    print(f"📊 Доступные качества: {', '.join(QUALITY_PRESETS.keys())}")
-    executor.start_polling(dp, skip_updates=True) 
+    print("📥 Режим: 3 метода скачивания")
+    executor.start_polling(dp, skip_updates=True)
