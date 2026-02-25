@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-# Бот для эдитов и скинпаков (формат 1:1 + 4K)
-# by Колин (с поддержкой высокого качества)
+# Бот для эдитов и скинпаков (формат 1:1 + 4К)
+# by Колин (исправленная версия)
 
 import os
 import sys
-import asyncio
 import subprocess
 import tempfile
 import shutil
@@ -12,7 +11,6 @@ import json
 import random
 from pathlib import Path
 from datetime import datetime
-import cv2
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
@@ -40,13 +38,14 @@ QUALITY_PRESETS = {
     "HD": {"height": 720, "width": 720, "crf": 20, "desc": "720p"},
     "FULL_HD": {"height": 1080, "width": 1080, "crf": 18, "desc": "1080p"},
     "2K": {"height": 1440, "width": 1440, "crf": 16, "desc": "2K"},
-    "4K": {"height": 2160, "width": 2160, "crf": 14, "desc": "4K (2160p)"}
+    "4K": {"height": 2160, "width": 2160, "crf": 14, "desc": "4K"}
 }
 
-DEFAULT_QUALITY = "FULL_HD"  # По умолчанию 1080p
+DEFAULT_QUALITY = "FULL_HD"
 MAX_CLIP_DURATION = 15
 # ================================
 
+# Создаём папки
 os.makedirs(CLIPS_DIR, exist_ok=True)
 os.makedirs(SKINPACKS_DIR, exist_ok=True)
 
@@ -106,7 +105,6 @@ async def download_video(url):
     temp_dir = tempfile.mkdtemp()
     output_template = os.path.join(temp_dir, '%(title)s.%(ext)s')
     
-    # Настройки для максимального качества
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': output_template,
@@ -132,14 +130,11 @@ async def convert_to_square(video_path, output_path, quality_key):
     """Конвертирует видео в квадратный формат 1:1 с выбранным качеством"""
     quality = QUALITY_PRESETS.get(quality_key, QUALITY_PRESETS[DEFAULT_QUALITY])
     
-    # Сначала получаем информацию о видео
     video_info = await get_video_info(video_path)
     
-    # Определяем оптимальный размер для сохранения качества
     target_size = quality['height']
     crf_value = quality['crf']
     
-    # Если исходное видео меньше целевого размера, используем исходный размер
     if video_info and video_info['height'] < target_size:
         target_size = video_info['height']
         print(f"Исходное видео {video_info['height']}p, сохраняем оригинальное качество")
@@ -152,8 +147,8 @@ async def convert_to_square(video_path, output_path, quality_key):
             f'setsar=1,fps=30'
         ),
         '-c:v', 'libx264',
-        '-preset', 'slow',  # Медленнее, но лучше качество
-        '-crf', str(crf_value),  # Меньше = лучше качество
+        '-preset', 'slow',
+        '-crf', str(crf_value),
         '-profile:v', 'high',
         '-level', '4.2',
         '-pix_fmt', 'yuv420p',
@@ -170,60 +165,26 @@ async def convert_to_square(video_path, output_path, quality_key):
         print(f"Ошибка конвертации: {e}")
         return False
 
-async def upscale_video(input_path, output_path, target_height=2160):
-    """Улучшает качество видео до 4K с помощью AI-апскейла"""
-    # Используем FFmpeg с аппаратным ускорением если доступно
-    # Для реального AI-апскейла нужны нейросети, но для простоты используем высококачественное масштабирование
-    cmd = [
-        'ffmpeg', '-i', input_path,
-        '-vf', f'scale=-2:{target_height}:flags=lanczos',
-        '-c:v', 'libx264',
-        '-preset', 'slow',
-        '-crf', '14',
-        '-profile:v', 'high444',
-        '-pix_fmt', 'yuv420p',
-        '-movflags', '+faststart',
-        '-an',
-        '-y',
-        output_path
-    ]
-    
-    try:
-        subprocess.run(cmd, check=True, capture_output=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Ошибка апскейла: {e}")
-        return False
-
 async def cut_into_clips(video_path, clip_duration, quality_key):
-    """Нарезает видео на клипы заданной длительности с выбранным качеством"""
+    """Нарезает видео на клипы"""
     clips = []
     temp_dir = tempfile.mkdtemp()
     
-    # Получаем информацию о видео
     video_info = await get_video_info(video_path)
     if not video_info:
         return clips, temp_dir
     
     duration = video_info['duration']
-    fps = video_info['fps']
     
-    # Количество клипов
     num_clips = int(duration // clip_duration)
     if num_clips == 0:
         num_clips = 1
-    
-    # Создаём папку для превью
-    preview_dir = os.path.join(temp_dir, 'previews')
-    os.makedirs(preview_dir, exist_ok=True)
     
     for i in range(num_clips):
         start_time = i * clip_duration
         temp_clip = os.path.join(temp_dir, f"temp_{i:03d}.mp4")
         output_path = os.path.join(temp_dir, f"clip_{i:03d}.mp4")
-        preview_path = os.path.join(preview_dir, f"preview_{i:03d}.jpg")
         
-        # Сначала нарезаем без перекодирования
         cut_cmd = [
             'ffmpeg', '-i', video_path,
             '-ss', str(start_time),
@@ -237,28 +198,15 @@ async def cut_into_clips(video_path, clip_duration, quality_key):
         try:
             subprocess.run(cut_cmd, check=True, capture_output=True)
             
-            # Конвертируем в квадрат с нужным качеством
             if await convert_to_square(temp_clip, output_path, quality_key):
                 clips.append(output_path)
-                
-                # Создаём превью
-                preview_cmd = [
-                    'ffmpeg', '-i', output_path,
-                    '-ss', '00:00:01',
-                    '-vframes', '1',
-                    '-vf', 'scale=320:320',
-                    '-y',
-                    preview_path
-                ]
-                subprocess.run(preview_cmd, capture_output=True)
-                
+            
             os.remove(temp_clip)
         except subprocess.CalledProcessError as e:
             print(f"Ошибка нарезки: {e}")
     
     return clips, temp_dir
 
-# ========== ФУНКЦИИ РАБОТЫ СО СКИНАМИ ==========
 async def process_skinpack(message: types.Message, file_path: str, filename: str):
     """Обрабатывает загруженный скинпак"""
     user_id = str(message.from_user.id)
@@ -300,7 +248,6 @@ async def process_video(message: types.Message, video_path: str, original_name: 
     
     status_msg = await message.reply(f"🎬 Начинаю нарезку на клипы (качество: {QUALITY_PRESETS[quality]['desc']})...")
     
-    # Нарезаем на клипы
     clips, temp_dir = await cut_into_clips(video_path, clip_duration, quality)
     
     if not clips:
@@ -309,7 +256,6 @@ async def process_video(message: types.Message, video_path: str, original_name: 
     
     await status_msg.edit_text(f"✅ Готово {len(clips)} клипов! Отправляю...")
     
-    # Сохраняем клипы пользователя
     if is_user_clip:
         if 'clips' not in user_data[user_id]:
             user_data[user_id]['clips'] = []
@@ -326,7 +272,6 @@ async def process_video(message: types.Message, video_path: str, original_name: 
             })
         save_user_data()
     
-    # Отправляем клипы
     for i, clip_path in enumerate(clips):
         with open(clip_path, 'rb') as f:
             caption = f"🎬 Клип {i+1}/{len(clips)} из {original_name}\n📐 Формат 1:1\n📊 Качество: {QUALITY_PRESETS[quality]['desc']}"
@@ -380,7 +325,6 @@ async def start_cmd(message: types.Message):
 
 @dp.message_handler(commands=['quality'])
 async def quality_cmd(message: types.Message):
-    """Меню выбора качества"""
     user_id = str(message.from_user.id)
     current = user_data.get(user_id, {}).get('quality', DEFAULT_QUALITY)
     
@@ -425,10 +369,11 @@ async def my_clips_cmd(message: types.Message):
         return
     
     markup = InlineKeyboardMarkup(row_width=1)
-    for i, clip in enumerate(clips[-10:]):  # Последние 10
+    for i, clip in enumerate(clips[-10:]):
         quality = clip.get('quality', 'unknown')
+        quality_desc = QUALITY_PRESETS.get(quality, {}).get('desc', quality)
         markup.add(InlineKeyboardButton(
-            f"🎬 Клип {i+1} ({quality})",
+            f"🎬 Клип {i+1} ({quality_desc})",
             callback_data=f"get_clip_{i}"
         ))
     
@@ -477,7 +422,7 @@ async def handle_video_file(message: types.Message):
     
     if message.document:
         filename = message.document.file_name
-        if filename.endswith(('.zip', '.rar', '.7z', '.png', '.jpg')):
+        if filename and filename.endswith(('.zip', '.rar', '.7z', '.png', '.jpg')):
             is_skinpack = True
     
     file_id = message.video.file_id if message.video else message.document.file_id
@@ -492,7 +437,6 @@ async def handle_video_file(message: types.Message):
     if is_skinpack:
         await process_skinpack(message, local_path, filename)
     else:
-        # Проверяем качество исходного видео
         video_info = await get_video_info(local_path)
         if video_info:
             quality_msg = f"📊 Исходное видео: {video_info['height']}p"
@@ -563,4 +507,57 @@ async def settings_callback(callback: types.CallbackQuery):
         f"Изменить длительность: /duration <сек>\n"
         f"Изменить качество: /quality",
         parse_mode='Markdown',
+        reply_markup=markup
+    )
+    await callback.answer()
+
+@dp.callback_query_handler(lambda c: c.data == 'quality_menu')
+async def quality_menu_callback(callback: types.CallbackQuery):
+    await quality_cmd(callback.message)
+    await callback.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('set_quality_'))
+async def set_quality_callback(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    quality = callback.data.replace('set_quality_', '')
+    
+    if quality in QUALITY_PRESETS:
+        if user_id not in user_data:
+            user_data[user_id] = {'duration': 5, 'quality': quality, 'clips': [], 'skinpacks': [], 'skins': []}
+        else:
+            user_data[user_id]['quality'] = quality
+        save_user_data()
         
+        await callback.message.edit_text(
+            f"✅ Качество установлено: {QUALITY_PRESETS[quality]['desc']}\n\n"
+            f"Теперь все новые клипы будут создаваться в этом качестве.",
+            parse_mode='Markdown'
+        )
+    await callback.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('get_clip_'))
+async def get_clip_callback(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    index = int(callback.data.split('_')[2])
+    
+    clips = user_data.get(user_id, {}).get('clips', [])
+    if 0 <= index < len(clips):
+        clip = clips[index]
+        if os.path.exists(clip['path']):
+            with open(clip['path'], 'rb') as f:
+                quality = clip.get('quality', 'unknown')
+                quality_desc = QUALITY_PRESETS.get(quality, {}).get('desc', quality)
+                await callback.message.answer_video(
+                    f,
+                    caption=f"🎬 {clip['name']}\n📊 Качество: {quality_desc}"
+                )
+        else:
+            await callback.message.answer("❌ Файл не найден")
+    await callback.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('view_skinpack_'))
+async def view_skinpack_callback(callback: types.CallbackQuery):
+    user_id = str(callback.from_user.id)
+    index = int(callback.data.split('_')[2])
+    
+    skinpacks = user_data.get
