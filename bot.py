@@ -35,41 +35,92 @@ dp = Dispatcher(bot)
 user_videos = {}
 user_audios = {}
 
-# ========== ФУНКЦИИ ==========
+# ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ СКАЧИВАНИЯ ==========
 def download_video(url, quality_key):
-    """Скачивает видео с YouTube"""
+    """
+    Скачивает видео с YouTube с поддержкой новых требований 2026 года
+    """
     temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
     quality = QUALITY_PRESETS[quality_key]
     target_height = quality["height"]
     
     output = os.path.join(temp_dir, 'video.%(ext)s')
     
+    # Критически важные параметры для 2026 года
     ydl_opts = {
         'format': f'bestvideo[height<={target_height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={target_height}][ext=mp4]',
         'outtmpl': output,
         'merge_output_format': 'mp4',
         'quiet': True,
+        'no_warnings': True,
+        
+        # Обход новых блокировок YouTube
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['android', 'web'],  # android самый стабильный
+                'skip': ['hls', 'dash'],
+                'player_skip': ['js', 'configs'],  # пропускаем сложную JS-расшифровку
             }
-        }
+        },
+        
+        # Дополнительные параметры для стабильности
+        'prefer_insecure': True,
+        'geo_bypass': True,
+        'geo_bypass_country': 'US',
+        'socket_timeout': 30,
+        'retries': 5,
+        
+        # Форсируем mp4
+        'merge_output_format': 'mp4',
     }
     
+    # Пробуем скачать
     try:
+        print(f"📥 Скачиваю видео в {QUALITY_PRESETS[quality_key]['desc']}...")
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             base = filename.rsplit('.', 1)[0]
             
-            if os.path.exists(base + '.mp4'):
-                return base + '.mp4', info.get('title', 'video'), temp_dir
+            # Проверяем наличие файла
+            for ext in ['.mp4', '.webm', '.mkv']:
+                if os.path.exists(base + ext):
+                    file_size = os.path.getsize(base + ext) / 1024 / 1024
+                    print(f"✅ Видео скачано: {file_size:.1f} MB")
+                    return base + ext, info.get('title', 'video'), temp_dir
+                    
     except Exception as e:
-        print(f"Ошибка скачивания: {e}")
+        print(f"❌ Первая попытка не удалась: {e}")
+        
+        # Запасной вариант - android клиент
+        try:
+            print("🔄 Пробую android клиент...")
+            android_opts = {
+                'format': 'best[height<=720][ext=mp4]',
+                'outtmpl': output,
+                'quiet': True,
+                'extractor_args': {'youtube': {'player_client': ['android']}}
+            }
+            
+            with yt_dlp.YoutubeDL(android_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                base = filename.rsplit('.', 1)[0]
+                
+                if os.path.exists(base + '.mp4'):
+                    file_size = os.path.getsize(base + '.mp4') / 1024 / 1024
+                    print(f"✅ Android метод успешен: {file_size:.1f} MB")
+                    return base + '.mp4', info.get('title', 'video'), temp_dir
+                    
+        except Exception as e2:
+            print(f"❌ Android метод тоже не сработал: {e2}")
     
+    print("❌ Все методы скачивания не сработали")
     shutil.rmtree(temp_dir)
     return None, None, None
 
+# ========== ОСТАЛЬНЫЕ ФУНКЦИИ БЕЗ ИЗМЕНЕНИЙ ==========
 def get_duration(file_path):
     """Получает длительность видео/аудио"""
     cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
@@ -257,7 +308,7 @@ async def yt_command(message: types.Message):
     video_path, title, temp_dir = download_video(url, quality)
     
     if not video_path:
-        await msg.edit_text("❌ Не удалось скачать видео")
+        await msg.edit_text("❌ Не удалось скачать видео. Возможно, YouTube заблокировал доступ.")
         return
     
     if user_id not in user_videos:
@@ -373,5 +424,6 @@ async def process_files(message: types.Message, user_id: str):
 
 # ========== ЗАПУСК ==========
 if __name__ == '__main__':
-    print("🤖 BeatSync Clip Bot запущен в режиме polling")
+    print("🤖 BeatSync Clip Bot запущен")
+    print("📥 Режим скачивания: адаптирован под YouTube 2026")
     executor.start_polling(dp, skip_updates=True)
