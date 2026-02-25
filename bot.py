@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Бот для эдитов и скинпаков (формат 1:1 + 4К)
-# by Колин (исправленная версия)
+# by Колин (исправлено для aiogram 2.x)
 
 import os
 import sys
@@ -13,13 +13,14 @@ from pathlib import Path
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import ParseMode, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 import yt_dlp
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ... дальше весь код без изменений ...
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = os.getenv('BOT_TOKEN')
