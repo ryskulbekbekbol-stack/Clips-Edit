@@ -1,3 +1,2 @@
-yt-dlp>=2026.2.21
+yt-dlp
 aiogram==2.23.1
-python-dotenv==1.0.0
