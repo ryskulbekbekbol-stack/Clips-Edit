@@ -39,8 +39,8 @@ def download_method1(url, temp_dir):
             base = filename.rsplit('.', 1)[0]
             if os.path.exists(base + '.mp4'):
                 return base + '.mp4', info.get('title', 'video')
-    except:
-        pass
+    except Exception as e:
+        print(f"Метод 1 ошибка: {e}")
     return None, None
 
 def download_method2(url, temp_dir):
@@ -59,8 +59,8 @@ def download_method2(url, temp_dir):
             base = filename.rsplit('.', 1)[0]
             if os.path.exists(base + '.mp4'):
                 return base + '.mp4', info.get('title', 'video')
-    except:
-        pass
+    except Exception as e:
+        print(f"Метод 2 ошибка: {e}")
     return None, None
 
 def download_method3(url, temp_dir):
@@ -76,8 +76,8 @@ def download_method3(url, temp_dir):
             info = ydl.extract_info(url, download=True)
             if os.path.exists(output):
                 return output, info.get('title', 'video')
-    except:
-        pass
+    except Exception as e:
+        print(f"Метод 3 ошибка: {e}")
     return None, None
 
 def download_video(url):
@@ -100,64 +100,92 @@ def download_video(url):
     return None, None, None
 
 def get_duration(file_path):
-    cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    """Длительность"""
     try:
+        cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
         return float(result.stdout.strip())
     except:
         return 0
 
 def create_beats(duration):
+    """Создает биты"""
     beats = []
+    interval = 0.5
     current = 0
     while current < duration:
         beats.append(current)
-        current += 0.5
+        current += interval
     return beats
 
-def cut_video(video_path, beats, output_dir):
+def cut_video(video_path, beats, output_dir, clip_duration):
+    """Режет видео"""
     clips = []
-    video_duration = get_duration(video_path)
-    valid_beats = [b for b in beats if b < video_duration]
     
-    for i in range(len(valid_beats)-1):
-        start = valid_beats[i]
-        end = valid_beats[i+1]
+    # Берем только первые 10 битов
+    beats = beats[:10]
+    
+    for i in range(len(beats)-1):
+        start = beats[i]
+        end = beats[i+1]
+        
         if end - start < 0.3:
             continue
-        output = os.path.join(output_dir, f"clip_{i:03d}.mp4")
-        cmd = ['ffmpeg', '-i', video_path, '-ss', str(start), '-to', str(end), '-c', 'copy', '-an', '-y', output]
+            
+        output = os.path.join(output_dir, f"clip_{i}.mp4")
+        cmd = [
+            'ffmpeg', '-i', video_path,
+            '-ss', str(start),
+            '-to', str(end),
+            '-c', 'copy',
+            '-an',
+            '-y',
+            output
+        ]
+        
         try:
-            subprocess.run(cmd, check=True, capture_output=True)
-            clips.append(output)
-        except:
-            pass
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0 and os.path.exists(output):
+                clips.append(output)
+                print(f"Создан клип {i}")
+        except Exception as e:
+            print(f"Ошибка нарезки: {e}")
+    
     return clips
 
 def merge_clips(clips, audio_path, output_path, clip_duration):
+    """Склеивает"""
     if not clips:
         return None
+    
     list_file = os.path.join(os.path.dirname(output_path), 'list.txt')
     with open(list_file, 'w') as f:
         for clip in clips:
             f.write(f"file '{clip}'\n")
+    
     merged = os.path.join(os.path.dirname(output_path), 'merged.mp4')
     concat_cmd = ['ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_file, '-c', 'copy', '-y', merged]
+    
     try:
         subprocess.run(concat_cmd, check=True, capture_output=True)
+        
         trimmed = os.path.join(os.path.dirname(output_path), 'trimmed.mp3')
         trim_cmd = ['ffmpeg', '-i', audio_path, '-t', str(clip_duration), '-c', 'copy', '-y', trimmed]
         subprocess.run(trim_cmd, check=True, capture_output=True)
+        
         final_cmd = ['ffmpeg', '-i', merged, '-i', trimmed, '-c:v', 'copy', '-c:a', 'aac', '-map', '0:v:0', '-map', '1:a:0', '-shortest', '-y', output_path]
         subprocess.run(final_cmd, check=True, capture_output=True)
+        
         os.remove(merged)
         os.remove(trimmed)
         os.remove(list_file)
         return output_path
-    except:
+    except Exception as e:
+        print(f"Ошибка склейки: {e}")
         return None
 
 def compress_video(input_path):
+    """Сжатие"""
     size = os.path.getsize(input_path) / 1024 / 1024
     if size <= 45:
         return input_path
@@ -188,16 +216,26 @@ async def yt_command(message: types.Message):
     except:
         await message.reply("❌ Число нужно")
         return
+    
     user_id = str(message.from_user.id)
-    msg = await message.reply("⏬ Качаю...")
+    msg = await message.reply("⏬ Качаю видео...")
+    
     video_path, title, temp_dir = download_video(url)
+    
     if not video_path:
         await msg.edit_text("❌ Не скачалось")
         return
-    await message.reply("✅ Видео есть")
-    user_videos[user_id] = {'path': video_path, 'temp_dir': temp_dir, 'duration': clip_duration}
+    
+    await message.reply(f"✅ Видео скачано: {title[:30]}...")
+    
+    user_videos[user_id] = {
+        'path': video_path,
+        'temp_dir': temp_dir,
+        'duration': clip_duration
+    }
+    
     if user_id in user_audios:
-        await msg.edit_text("✅ Обрабатываю...")
+        await msg.edit_text("✅ Есть видео и аудио, делаю...")
         await process_files(message, user_id)
     else:
         await msg.edit_text("✅ Видео есть, кидай аудио")
@@ -206,13 +244,19 @@ async def yt_command(message: types.Message):
 async def handle_audio(message: types.Message):
     user_id = str(message.from_user.id)
     msg = await message.reply("⏬ Качаю аудио...")
+    
     file = await bot.get_file(message.audio.file_id)
     temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
     audio_path = os.path.join(temp_dir, 'audio.mp3')
     await bot.download_file(file.file_path, audio_path)
-    user_audios[user_id] = {'path': audio_path, 'temp_dir': temp_dir}
+    
+    user_audios[user_id] = {
+        'path': audio_path,
+        'temp_dir': temp_dir
+    }
+    
     if user_id in user_videos:
-        await msg.edit_text("✅ Обрабатываю...")
+        await msg.edit_text("✅ Есть видео и аудио, делаю...")
         await process_files(message, user_id)
     else:
         await msg.edit_text("✅ Аудио есть, кидай /yt")
@@ -221,27 +265,41 @@ async def process_files(message: types.Message, user_id: str):
     video_info = user_videos[user_id]
     audio_info = user_audios[user_id]
     clip_duration = video_info['duration']
-    msg = await message.reply("🎵 Делаю...")
+    
+    msg = await message.reply("🎵 Делаю биты...")
     beats = create_beats(clip_duration)
+    
     if len(beats) < 2:
-        beats = [0, clip_duration]
-    await msg.edit_text("✂️ Режу...")
-    work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
-    clips = cut_video(video_info['path'], beats, work_dir)
-    if not clips:
-        await msg.edit_text("❌ Не порезалось")
+        await msg.edit_text("❌ Слишком коротко")
         return
-    await msg.edit_text("🔄 Склеиваю...")
+    
+    await msg.edit_text("✂️ Режу видео...")
+    
+    work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+    clips = cut_video(video_info['path'], beats, work_dir, clip_duration)
+    
+    if not clips:
+        await msg.edit_text("❌ Не порезалось. FFmpeg есть?")
+        return
+    
+    await msg.edit_text(f"🔄 Склеиваю {len(clips)} кусков...")
+    
     output_path = os.path.join(work_dir, 'final.mp4')
     result = merge_clips(clips, audio_info['path'], output_path, clip_duration)
+    
     if not result:
         await msg.edit_text("❌ Не склеилось")
         return
+    
     result = compress_video(result)
     size = os.path.getsize(result) / 1024 / 1024
+    
     await msg.edit_text("✅ Готово!")
+    
     with open(result, 'rb') as f:
-        await message.reply_video(f, caption=f"✅ {clip_duration} сек")
+        await message.reply_video(f, caption=f"✅ {clip_duration} сек, {len(clips)} кусков, {size:.1f} MB")
+    
+    # Чистим
     shutil.rmtree(work_dir)
     shutil.rmtree(video_info['temp_dir'])
     shutil.rmtree(audio_info['temp_dir'])
