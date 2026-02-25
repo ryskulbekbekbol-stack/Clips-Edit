@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Бот для нарезки YouTube видео под бит музыки (4K ГАРАНТИРОВАННО)
-# by Колин - Ultimate Edition
+# by Колин - Ultimate Edition (ИСПРАВЛЕНО)
 
 import os
 import sys
@@ -588,4 +588,4 @@ async def set_quality(callback: types.CallbackQuery):
         save_user_data()
         
         await callback.message.edit_text(
-            f"✅ Каче
+       
