@@ -7,7 +7,6 @@ import shutil
 import json
 from flask import Flask, request
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import ParseMode, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 import yt_dlp
 from dotenv import load_dotenv
@@ -213,9 +212,9 @@ def merge_clips_with_audio(clips, audio_path, output_path, total_duration):
 @dp.message_handler(commands=['start'])
 async def start_cmd(message: types.Message):
     await message.reply(
-        "🎬 **BeatSync Clip Bot (Webhook)**\n\n"
+        "🎬 **BeatSync Clip Bot**\n\n"
         "**Команды:**\n"
-        "/quality <качество> - установить качество\n"
+        "/quality <качество> - 360p, 480p, 720p, 1080p\n"
         "/yt <ссылка> <секунд> - скачать видео\n\n"
         "**Как пользоваться:**\n"
         "1️⃣ Установи качество\n"
@@ -384,38 +383,25 @@ async def process_files(message: types.Message, user_id: str):
 
 # ========== ВЕБХУК ==========
 @app.route(WEBHOOK_PATH, methods=['POST'])
-async def webhook():
+def webhook():
     """Обрабатывает входящие обновления от Telegram"""
     update = types.Update(**request.json)
-    await dp.process_update(update)
+    dp.process_update(update)
     return 'ok', 200
 
 @app.route('/')
 def index():
     return 'Бот работает!', 200
 
-async def on_startup():
-    """Устанавливает вебхук при запуске"""
-    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-    await bot.set_webhook(webhook_url)
-    print(f"✅ Вебхук установлен на {webhook_url}")
-
-async def on_shutdown():
-    """Удаляет вебхук при остановке"""
-    await bot.delete_webhook()
-    print("👋 Вебхук удалён")
-
 # ========== ЗАПУСК ==========
 if __name__ == '__main__':
     print("🤖 BeatSync Clip Bot (Webhook) запущен")
     print(f"📡 Сервер слушает порт {PORT}")
     
-    # Запускаем Flask с aiogram
-    executor.start_webhook(
-        dispatcher=dp,
-        webhook_path=WEBHOOK_PATH,
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        host='0.0.0.0',
-        port=PORT
-    )
+    # Устанавливаем вебхук
+    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+    bot.set_webhook(webhook_url)
+    print(f"✅ Вебхук установлен на {webhook_url}")
+    
+    # Запускаем Flask
+    app.run(host='0.0.0.0', port=PORT)
