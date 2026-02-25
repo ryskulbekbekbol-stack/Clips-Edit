@@ -8,11 +8,8 @@ import json
 import asyncio
 from flask import Flask, request
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
 import yt_dlp
 from dotenv import load_dotenv
-from hypercorn.asyncio import serve
-from hypercorn.config import Config
 
 load_dotenv()
 
@@ -21,10 +18,12 @@ if not BOT_TOKEN:
     print("❌ Ошибка: BOT_TOKEN не установлен!")
     sys.exit(1)
 
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-if not WEBHOOK_URL:
-    print("❌ Ошибка: WEBHOOK_URL не установлен! Должно быть https://твой-проект.railway.app")
-    sys.exit(1)
+# Автоматически определяем URL из Railway
+RAILWAY_URL = os.getenv('RAILWAY_PUBLIC_DOMAIN')
+if RAILWAY_URL:
+    WEBHOOK_URL = f"https://{RAILWAY_URL}"
+else:
+    WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://your-app.railway.app')
 
 WEBHOOK_PATH = '/webhook'
 PORT = int(os.getenv('PORT', 8080))
@@ -51,6 +50,10 @@ user_audios = {}
 
 # Flask приложение
 app = Flask(__name__)
+
+print(f"🤖 BeatSync Bot запускается...")
+print(f"📡 URL: {WEBHOOK_URL}")
+print(f"📡 Порт: {PORT}")
 
 # ========== ФУНКЦИИ ==========
 def download_video(url, quality_key):
@@ -391,7 +394,7 @@ async def process_files(message: types.Message, user_id: str):
 # ========== ВЕБХУК ==========
 @app.route(WEBHOOK_PATH, methods=['POST'])
 def webhook():
-    """Синхронная обёртка для асинхронной обработки"""
+    """Обрабатывает входящие обновления"""
     update = types.Update(**request.json)
     asyncio.run(dp.process_update(update))
     return 'ok', 200
@@ -401,19 +404,14 @@ def index():
     return 'Бот работает!', 200
 
 # ========== ЗАПУСК ==========
-async def on_startup():
-    """Устанавливает вебхук при запуске"""
-    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-    await bot.set_webhook(webhook_url)
-    print(f"✅ Вебхук установлен на {webhook_url}")
-
-async def main():
-    await on_startup()
-    config = Config()
-    config.bind = [f"0.0.0.0:{PORT}"]
-    await serve(app, config)
-
 if __name__ == '__main__':
-    print("🤖 BeatSync Clip Bot (Webhook) запущен")
-    print(f"📡 Сервер слушает порт {PORT}")
-    asyncio.run(main())
+    print(f"🤖 BeatSync Bot запускается на порту {PORT}")
+    print(f"📡 Вебхук URL: {WEBHOOK_URL}{WEBHOOK_PATH}")
+    
+    # Устанавливаем вебхук
+    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+    asyncio.run(bot.set_webhook(webhook_url))
+    print(f"✅ Вебхук установлен")
+    
+    # Запускаем Flask
+    app.run(host='0.0.0.0', port=PORT)
