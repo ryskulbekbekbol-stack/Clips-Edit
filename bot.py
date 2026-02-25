@@ -16,49 +16,15 @@ if not BOT_TOKEN:
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Проверяем FFmpeg с диагностикой
-def check_ffmpeg():
-    try:
-        # Пробуем разные пути
-        paths = ['ffmpeg', '/usr/bin/ffmpeg', '/nix/store/*/bin/ffmpeg']
-        for path in paths:
-            if '*' in path:
-                # Для wildcard пути
-                import glob
-                found = glob.glob(path)
-                if found:
-                    return True, f"FFmpeg найден в {found[0]}"
-            else:
-                result = subprocess.run([path, '-version'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    return True, f"FFmpeg найден: {path}"
-    except:
-        pass
-    
-    # Проверяем наличие nixpacks.toml
-    if os.path.exists('nixpacks.toml'):
-        print("✅ nixpacks.toml найден")
-    else:
-        print("❌ nixpacks.toml ОТСУТСТВУЕТ!")
-        print("\n🔧 СОЗДАЙ ФАЙЛ nixpacks.toml С СОДЕРЖИМЫМ:")
-        print("```toml")
-        print("[phases.setup]")
-        print('nixPkgs = ["ffmpeg"]')
-        print("```")
-    
-    return False, "FFmpeg не найден"
-
-FFMPEG_OK, FFMPEG_MSG = check_ffmpeg()
-print(FFMPEG_MSG)
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
 user_videos = {}
 user_audios = {}
 
-# ========== ТВОИ 3 МЕТОДА ==========
+# ========== ТРИ МЕТОДА СКАЧИВАНИЯ ==========
 def download_method1(url, temp_dir):
+    """Метод 1: Android клиент"""
     output = os.path.join(temp_dir, 'video.%(ext)s')
     ydl_opts = {
         'format': 'best[height<=720]',
@@ -78,6 +44,7 @@ def download_method1(url, temp_dir):
     return None, None
 
 def download_method2(url, temp_dir):
+    """Метод 2: Web клиент"""
     output = os.path.join(temp_dir, 'video.%(ext)s')
     ydl_opts = {
         'format': 'best[height<=720]',
@@ -97,6 +64,7 @@ def download_method2(url, temp_dir):
     return None, None
 
 def download_method3(url, temp_dir):
+    """Метод 3: Любой формат"""
     output = os.path.join(temp_dir, 'video.mp4')
     ydl_opts = {
         'format': 'best',
@@ -113,6 +81,7 @@ def download_method3(url, temp_dir):
     return None, None
 
 def download_video(url):
+    """Пробует все три метода по очереди"""
     temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
     
     video_path, title = download_method1(url, temp_dir)
@@ -148,9 +117,6 @@ def create_beats(duration):
     return beats
 
 def cut_video(video_path, beats, output_dir):
-    if not FFMPEG_OK:
-        return []
-        
     clips = []
     duration = get_duration(video_path)
     valid_beats = [b for b in beats if b < duration]
@@ -170,9 +136,9 @@ def cut_video(video_path, beats, output_dir):
     return clips
 
 def merge_clips(clips, audio_path, output_path, clip_duration):
-    if not FFMPEG_OK or not clips:
+    if not clips:
         return None
-        
+    
     list_file = os.path.join(os.path.dirname(output_path), 'list.txt')
     with open(list_file, 'w') as f:
         for clip in clips:
@@ -199,9 +165,6 @@ def merge_clips(clips, audio_path, output_path, clip_duration):
         return None
 
 def compress_video(input_path):
-    if not FFMPEG_OK:
-        return input_path
-        
     size = os.path.getsize(input_path) / 1024 / 1024
     if size <= 45:
         return input_path
@@ -215,10 +178,7 @@ def compress_video(input_path):
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    text = "/yt ссылка секунд\nПотом аудио"
-    if not FFMPEG_OK:
-        text += "\n\n⚠️ FFmpeg не установлен! Создай файл nixpacks.toml с [phases.setup]\nnixPkgs = ['ffmpeg']"
-    await message.reply(text)
+    await message.reply("/yt ссылка секунд\nПотом аудио")
 
 @dp.message_handler(commands=['yt'])
 async def yt_command(message: types.Message):
@@ -246,7 +206,7 @@ async def yt_command(message: types.Message):
         await msg.edit_text("❌ Не скачалось")
         return
     
-    await message.reply("✅ Видео скачано")
+    await message.reply(f"✅ Видео скачано")
     
     user_videos[user_id] = {
         'path': video_path,
@@ -282,10 +242,6 @@ async def handle_audio(message: types.Message):
         await msg.edit_text("✅ Аудио есть, кидай /yt")
 
 async def process_files(message: types.Message, user_id: str):
-    if not FFMPEG_OK:
-        await message.reply("❌ FFmpeg не установлен! Создай nixpacks.toml")
-        return
-        
     video_info = user_videos[user_id]
     audio_info = user_audios[user_id]
     clip_duration = video_info['duration']
