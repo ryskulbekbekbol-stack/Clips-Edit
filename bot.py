@@ -5,8 +5,9 @@ import subprocess
 import tempfile
 import shutil
 import json
-import re
+from flask import Flask, request
 from aiogram import Bot, Dispatcher, types
+from aiogram.types import ParseMode, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 import yt_dlp
 from dotenv import load_dotenv
@@ -18,12 +19,6 @@ if not BOT_TOKEN:
     print("❌ Ошибка: BOT_TOKEN не установлен!")
     sys.exit(1)
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
-
-TEMP_DIR = "temp"
-os.makedirs(TEMP_DIR, exist_ok=True)
-
 # Настройки качества
 QUALITY_PRESETS = {
     "360p": {"height": 360, "crf": 23, "desc": "360p"},
@@ -33,11 +28,25 @@ QUALITY_PRESETS = {
 }
 
 DEFAULT_QUALITY = "720p"
+TEMP_DIR = "temp"
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Например: https://твой-проект.railway.app
+WEBHOOK_PATH = '/webhook'
+PORT = int(os.getenv('PORT', 8080))
 
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+# Инициализация бота
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
+
+# Flask приложение
+app = Flask(__name__)
+
+# Хранилище пользовательских данных
 user_videos = {}
 user_audios = {}
 
-# ========== ФУНКЦИИ СКАЧИВАНИЯ ==========
+# ========== ФУНКЦИИ РАБОТЫ С ВИДЕО ==========
 def download_video(url, quality_key):
     """Скачивает видео с YouTube"""
     temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
@@ -72,28 +81,8 @@ def download_video(url, quality_key):
     shutil.rmtree(temp_dir)
     return None, None, None
 
-# ========== ФУНКЦИИ ДЛЯ АУДИО ==========
-def detect_beats(audio_path):
-    """Определяет биты в аудио (равномерная сетка)"""
-    try:
-        # Получаем длительность аудио
-        cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
-               '-of', 'default=noprint_wrappers=1:nokey=1', audio_path]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        duration = float(result.stdout.strip())
-        
-        # Создаём биты каждые 0.5 секунды (120 BPM)
-        beats = []
-        current = 0
-        while current < duration:
-            beats.append(current)
-            current += 0.5
-        return beats
-    except:
-        return [0]
-
 def get_duration(file_path):
-    """Получает длительность файла"""
+    """Получает длительность видео/аудио"""
     cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
            '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -125,9 +114,25 @@ def compress_video(input_path, max_size_mb=45):
     except:
         return input_path
 
-# ========== ФУНКЦИИ НАРЕЗКИ ==========
+def detect_beats(audio_path):
+    """Определяет биты в аудио"""
+    try:
+        cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
+               '-of', 'default=noprint_wrappers=1:nokey=1', audio_path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        duration = float(result.stdout.strip())
+        
+        beats = []
+        current = 0
+        while current < duration:
+            beats.append(current)
+            current += 0.5
+        return beats
+    except:
+        return [0]
+
 def cut_video_segment(video_path, start_time, end_time, output_path, quality_key):
-    """Нарезает один сегмент видео с заданным качеством"""
+    """Нарезает один сегмент видео"""
     quality = QUALITY_PRESETS[quality_key]
     
     cmd = [
@@ -138,7 +143,7 @@ def cut_video_segment(video_path, start_time, end_time, output_path, quality_key
         '-c:v', 'libx264',
         '-preset', 'fast',
         '-crf', str(quality["crf"]),
-        '-an',  # без звука
+        '-an',
         '-y',
         output_path
     ]
@@ -150,17 +155,15 @@ def cut_video_segment(video_path, start_time, end_time, output_path, quality_key
         return False
 
 def merge_clips_with_audio(clips, audio_path, output_path, total_duration):
-    """Склеивает клипы и накладывает аудио заданной длины"""
+    """Склеивает клипы и накладывает аудио"""
     if not clips:
         return None
     
-    # Создаём список для FFmpeg
     list_file = os.path.join(os.path.dirname(output_path), 'list.txt')
     with open(list_file, 'w') as f:
         for clip in clips:
             f.write(f"file '{clip}'\n")
     
-    # Склеиваем видео без звука
     merged = os.path.join(os.path.dirname(output_path), 'merged.mp4')
     concat_cmd = [
         'ffmpeg', '-f', 'concat', '-safe', '0',
@@ -173,7 +176,6 @@ def merge_clips_with_audio(clips, audio_path, output_path, total_duration):
     try:
         subprocess.run(concat_cmd, check=True, capture_output=True)
         
-        # Обрезаем аудио до нужной длины
         trimmed_audio = os.path.join(os.path.dirname(output_path), 'trimmed_audio.mp3')
         trim_cmd = [
             'ffmpeg', '-i', audio_path,
@@ -184,7 +186,6 @@ def merge_clips_with_audio(clips, audio_path, output_path, total_duration):
         ]
         subprocess.run(trim_cmd, check=True, capture_output=True)
         
-        # Накладываем аудио на видео
         final_cmd = [
             'ffmpeg', '-i', merged,
             '-i', trimmed_audio,
@@ -199,7 +200,6 @@ def merge_clips_with_audio(clips, audio_path, output_path, total_duration):
         ]
         subprocess.run(final_cmd, check=True, capture_output=True)
         
-        # Очистка
         os.remove(merged)
         os.remove(trimmed_audio)
         os.remove(list_file)
@@ -213,15 +213,15 @@ def merge_clips_with_audio(clips, audio_path, output_path, total_duration):
 @dp.message_handler(commands=['start'])
 async def start_cmd(message: types.Message):
     await message.reply(
-        "🎬 **BeatSync Clip Bot**\n\n"
+        "🎬 **BeatSync Clip Bot (Webhook)**\n\n"
         "**Команды:**\n"
-        "/quality <качество> - установить качество (360p, 480p, 720p, 1080p)\n"
-        "/yt <ссылка> <секунд> - скачать видео на указанное количество секунд\n\n"
+        "/quality <качество> - установить качество\n"
+        "/yt <ссылка> <секунд> - скачать видео\n\n"
         "**Как пользоваться:**\n"
-        "1️⃣ Установи качество (по умолчанию 720p)\n"
+        "1️⃣ Установи качество\n"
         "2️⃣ Отправь /yt с ссылкой и длительностью\n"
         "3️⃣ Отправь аудиофайл\n"
-        "4️⃣ Получи клип под бит заданной длины"
+        "4️⃣ Получи клип под бит"
     )
 
 @dp.message_handler(commands=['quality'])
@@ -271,13 +271,11 @@ async def yt_command(message: types.Message):
         await msg.edit_text("❌ Не удалось скачать видео")
         return
     
-    # Сохраняем видео и длительность
     if user_id not in user_videos:
         user_videos[user_id] = {}
     user_videos[user_id]['video'] = {'path': video_path, 'temp_dir': temp_dir}
     user_videos[user_id]['duration'] = clip_duration
     
-    # Проверяем, есть ли аудио
     if user_id in user_audios and 'audio' in user_audios[user_id]:
         await msg.edit_text("✅ Видео скачано! Есть аудио, обрабатываю...")
         await process_files(message, user_id)
@@ -298,7 +296,6 @@ async def handle_audio(message: types.Message):
         user_audios[user_id] = {}
     user_audios[user_id]['audio'] = {'path': audio_path, 'temp_dir': temp_dir}
     
-    # Проверяем, есть ли видео
     if user_id in user_videos and 'video' in user_videos[user_id]:
         await msg.edit_text("✅ Аудио получено! Есть видео, обрабатываю...")
         await process_files(message, user_id)
@@ -318,21 +315,17 @@ async def process_files(message: types.Message, user_id: str):
         
         msg = await message.reply("🎵 Анализирую биты в музыке...")
         
-        # Получаем биты
         beats = detect_beats(audio_path)
         
         if len(beats) < 2:
             await msg.edit_text("❌ Не удалось определить биты")
             return
         
-        # Создаём рабочую папку
         work_dir = tempfile.mkdtemp(dir=TEMP_DIR)
         clips = []
         
-        # Рассчитываем длительность каждого сегмента
         segment_duration = clip_duration / len(beats) if len(beats) > 1 else clip_duration
         
-        # Нарезаем видео по битам
         for i in range(len(beats)):
             start = i * segment_duration
             end = min((i + 1) * segment_duration, clip_duration)
@@ -351,7 +344,6 @@ async def process_files(message: types.Message, user_id: str):
         
         await msg.edit_text(f"🔄 Склеиваю {len(clips)} фрагментов...")
         
-        # Склеиваем с аудио
         output_path = os.path.join(work_dir, 'final.mp4')
         result = merge_clips_with_audio(clips, audio_path, output_path, clip_duration)
         
@@ -360,7 +352,6 @@ async def process_files(message: types.Message, user_id: str):
             shutil.rmtree(work_dir)
             return
         
-        # Проверяем размер и сжимаем если надо
         file_size = os.path.getsize(result) / 1024 / 1024
         if file_size > 45:
             await msg.edit_text(f"📦 Видео {file_size:.1f} MB. Сжимаю...")
@@ -381,7 +372,6 @@ async def process_files(message: types.Message, user_id: str):
                 )
             )
         
-        # Очистка
         shutil.rmtree(work_dir)
         shutil.rmtree(video_info['temp_dir'])
         shutil.rmtree(audio_info['temp_dir'])
@@ -392,7 +382,40 @@ async def process_files(message: types.Message, user_id: str):
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
 
+# ========== ВЕБХУК ==========
+@app.route(WEBHOOK_PATH, methods=['POST'])
+async def webhook():
+    """Обрабатывает входящие обновления от Telegram"""
+    update = types.Update(**request.json)
+    await dp.process_update(update)
+    return 'ok', 200
+
+@app.route('/')
+def index():
+    return 'Бот работает!', 200
+
+async def on_startup():
+    """Устанавливает вебхук при запуске"""
+    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+    await bot.set_webhook(webhook_url)
+    print(f"✅ Вебхук установлен на {webhook_url}")
+
+async def on_shutdown():
+    """Удаляет вебхук при остановке"""
+    await bot.delete_webhook()
+    print("👋 Вебхук удалён")
+
+# ========== ЗАПУСК ==========
 if __name__ == '__main__':
-    print("🤖 BeatSync Clip Bot запущен")
-    print("✅ Режим: нарезка под бит с заданной длительностью")
-    executor.start_polling(dp, skip_updates=True)!
+    print("🤖 BeatSync Clip Bot (Webhook) запущен")
+    print(f"📡 Сервер слушает порт {PORT}")
+    
+    # Запускаем Flask с aiogram
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path=WEBHOOK_PATH,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        host='0.0.0.0',
+        port=PORT
+    )
