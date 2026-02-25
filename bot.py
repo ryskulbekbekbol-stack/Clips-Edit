@@ -16,21 +16,40 @@ if not BOT_TOKEN:
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Проверяем FFmpeg при запуске
+# Проверяем FFmpeg с диагностикой
 def check_ffmpeg():
     try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        print("✅ FFmpeg найден")
-        return True
+        # Пробуем разные пути
+        paths = ['ffmpeg', '/usr/bin/ffmpeg', '/nix/store/*/bin/ffmpeg']
+        for path in paths:
+            if '*' in path:
+                # Для wildcard пути
+                import glob
+                found = glob.glob(path)
+                if found:
+                    return True, f"FFmpeg найден в {found[0]}"
+            else:
+                result = subprocess.run([path, '-version'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    return True, f"FFmpeg найден: {path}"
     except:
-        print("❌ FFmpeg НЕ найден!")
-        print("\n🔧 Как установить FFmpeg на Railway:")
-        print("1. Зайди в Variables своего проекта")
-        print("2. Добавь: RAILPACK_PACKAGES = ffmpeg")
-        print("3. Перезапусти деплой\n")
-        return False
+        pass
+    
+    # Проверяем наличие nixpacks.toml
+    if os.path.exists('nixpacks.toml'):
+        print("✅ nixpacks.toml найден")
+    else:
+        print("❌ nixpacks.toml ОТСУТСТВУЕТ!")
+        print("\n🔧 СОЗДАЙ ФАЙЛ nixpacks.toml С СОДЕРЖИМЫМ:")
+        print("```toml")
+        print("[phases.setup]")
+        print('nixPkgs = ["ffmpeg"]')
+        print("```")
+    
+    return False, "FFmpeg не найден"
 
-FFMPEG_OK = check_ffmpeg()
+FFMPEG_OK, FFMPEG_MSG = check_ffmpeg()
+print(FFMPEG_MSG)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -38,7 +57,7 @@ dp = Dispatcher(bot)
 user_videos = {}
 user_audios = {}
 
-# ========== ТРИ МЕТОДА ==========
+# ========== ТВОИ 3 МЕТОДА ==========
 def download_method1(url, temp_dir):
     output = os.path.join(temp_dir, 'video.%(ext)s')
     ydl_opts = {
@@ -54,8 +73,8 @@ def download_method1(url, temp_dir):
             base = filename.rsplit('.', 1)[0]
             if os.path.exists(base + '.mp4'):
                 return base + '.mp4', info.get('title', 'video')
-    except Exception as e:
-        print(f"Метод 1 ошибка: {e}")
+    except:
+        pass
     return None, None
 
 def download_method2(url, temp_dir):
@@ -73,8 +92,8 @@ def download_method2(url, temp_dir):
             base = filename.rsplit('.', 1)[0]
             if os.path.exists(base + '.mp4'):
                 return base + '.mp4', info.get('title', 'video')
-    except Exception as e:
-        print(f"Метод 2 ошибка: {e}")
+    except:
+        pass
     return None, None
 
 def download_method3(url, temp_dir):
@@ -89,8 +108,8 @@ def download_method3(url, temp_dir):
             info = ydl.extract_info(url, download=True)
             if os.path.exists(output):
                 return output, info.get('title', 'video')
-    except Exception as e:
-        print(f"Метод 3 ошибка: {e}")
+    except:
+        pass
     return None, None
 
 def download_video(url):
@@ -176,8 +195,7 @@ def merge_clips(clips, audio_path, output_path, clip_duration):
         os.remove(trimmed)
         os.remove(list_file)
         return output_path
-    except Exception as e:
-        print(f"Ошибка склейки: {e}")
+    except:
         return None
 
 def compress_video(input_path):
@@ -199,7 +217,7 @@ def compress_video(input_path):
 async def start(message: types.Message):
     text = "/yt ссылка секунд\nПотом аудио"
     if not FFMPEG_OK:
-        text += "\n\n⚠️ FFmpeg не установлен! Добавь RAILPACK_PACKAGES=ffmpeg в Variables"
+        text += "\n\n⚠️ FFmpeg не установлен! Создай файл nixpacks.toml с [phases.setup]\nnixPkgs = ['ffmpeg']"
     await message.reply(text)
 
 @dp.message_handler(commands=['yt'])
@@ -265,7 +283,7 @@ async def handle_audio(message: types.Message):
 
 async def process_files(message: types.Message, user_id: str):
     if not FFMPEG_OK:
-        await message.reply("❌ FFmpeg не установлен! Добавь RAILPACK_PACKAGES=ffmpeg в Variables")
+        await message.reply("❌ FFmpeg не установлен! Создай nixpacks.toml")
         return
         
     video_info = user_videos[user_id]
