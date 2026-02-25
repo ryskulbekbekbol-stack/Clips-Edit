@@ -17,7 +17,6 @@ if not BOT_TOKEN:
     print("❌ Ошибка: BOT_TOKEN не установлен!")
     sys.exit(1)
 
-# Настройки качества
 QUALITY_PRESETS = {
     "360p": {"height": 360, "crf": 23, "desc": "360p"},
     "480p": {"height": 480, "crf": 22, "desc": "480p"},
@@ -35,92 +34,133 @@ dp = Dispatcher(bot)
 user_videos = {}
 user_audios = {}
 
-# ========== ИСПРАВЛЕННАЯ ФУНКЦИЯ СКАЧИВАНИЯ ==========
-def download_video(url, quality_key):
-    """
-    Скачивает видео с YouTube с поддержкой новых требований 2026 года
-    """
-    temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
+# ========== 3 МЕТОДА СКАЧИВАНИЯ ==========
+def download_video_method1(url, quality_key, temp_dir):
+    """Метод 1: Основной с куками из браузера"""
     quality = QUALITY_PRESETS[quality_key]
     target_height = quality["height"]
-    
     output = os.path.join(temp_dir, 'video.%(ext)s')
     
-    # Критически важные параметры для 2026 года
     ydl_opts = {
         'format': f'bestvideo[height<={target_height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={target_height}][ext=mp4]',
         'outtmpl': output,
         'merge_output_format': 'mp4',
         'quiet': True,
-        'no_warnings': True,
-        
-        # Обход новых блокировок YouTube
+        'cookies_from_browser': 'chrome',  # Используем куки из Chrome
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web'],  # android самый стабильный
+                'player_client': ['web'],
                 'skip': ['hls', 'dash'],
-                'player_skip': ['js', 'configs'],  # пропускаем сложную JS-расшифровку
             }
         },
-        
-        # Дополнительные параметры для стабильности
-        'prefer_insecure': True,
-        'geo_bypass': True,
-        'geo_bypass_country': 'US',
-        'socket_timeout': 30,
-        'retries': 5,
-        
-        # Форсируем mp4
-        'merge_output_format': 'mp4',
     }
     
-    # Пробуем скачать
     try:
-        print(f"📥 Скачиваю видео в {QUALITY_PRESETS[quality_key]['desc']}...")
-        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             base = filename.rsplit('.', 1)[0]
             
-            # Проверяем наличие файла
-            for ext in ['.mp4', '.webm', '.mkv']:
+            for ext in ['.mp4']:
                 if os.path.exists(base + ext):
-                    file_size = os.path.getsize(base + ext) / 1024 / 1024
-                    print(f"✅ Видео скачано: {file_size:.1f} MB")
-                    return base + ext, info.get('title', 'video'), temp_dir
-                    
+                    return base + ext, info.get('title', 'video')
     except Exception as e:
-        print(f"❌ Первая попытка не удалась: {e}")
-        
-        # Запасной вариант - android клиент
-        try:
-            print("🔄 Пробую android клиент...")
-            android_opts = {
-                'format': 'best[height<=720][ext=mp4]',
-                'outtmpl': output,
-                'quiet': True,
-                'extractor_args': {'youtube': {'player_client': ['android']}}
+        print(f"❌ Метод 1 не сработал: {e}")
+        return None, None
+
+def download_video_method2(url, quality_key, temp_dir):
+    """Метод 2: Android клиент (не требует кук)"""
+    quality = QUALITY_PRESETS[quality_key]
+    target_height = quality["height"]
+    output = os.path.join(temp_dir, 'video.%(ext)s')
+    
+    ydl_opts = {
+        'format': f'best[height<={target_height}][ext=mp4]',
+        'outtmpl': output,
+        'quiet': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android'],
             }
+        },
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            base = filename.rsplit('.', 1)[0]
             
-            with yt_dlp.YoutubeDL(android_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
-                base = filename.rsplit('.', 1)[0]
-                
-                if os.path.exists(base + '.mp4'):
-                    file_size = os.path.getsize(base + '.mp4') / 1024 / 1024
-                    print(f"✅ Android метод успешен: {file_size:.1f} MB")
-                    return base + '.mp4', info.get('title', 'video'), temp_dir
-                    
-        except Exception as e2:
-            print(f"❌ Android метод тоже не сработал: {e2}")
+            if os.path.exists(base + '.mp4'):
+                return base + '.mp4', info.get('title', 'video')
+    except Exception as e:
+        print(f"❌ Метод 2 не сработал: {e}")
+        return None, None
+
+def download_video_method3(url, quality_key, temp_dir):
+    """Метод 3: Минимальное качество + cookies.txt"""
+    quality = QUALITY_PRESETS[quality_key]
+    target_height = min(quality["height"], 720)  # Ограничиваем 720p
+    output = os.path.join(temp_dir, 'video.%(ext)s')
+    
+    ydl_opts = {
+        'format': f'best[height<={target_height}][ext=mp4]',
+        'outtmpl': output,
+        'quiet': True,
+        'extract_flat': False,
+    }
+    
+    # Если есть файл cookies.txt, используем его
+    if os.path.exists('cookies.txt'):
+        ydl_opts['cookies'] = 'cookies.txt'
+        print("📦 Использую cookies.txt")
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            base = filename.rsplit('.', 1)[0]
+            
+            if os.path.exists(base + '.mp4'):
+                return base + '.mp4', info.get('title', 'video')
+    except Exception as e:
+        print(f"❌ Метод 3 не сработал: {e}")
+        return None, None
+
+def download_video(url, quality_key):
+    """
+    Главная функция - пробует все 3 метода по очереди
+    """
+    print(f"\n📥 Скачиваю видео в {QUALITY_PRESETS[quality_key]['desc']}...")
+    
+    # Метод 1
+    print("🔄 Пробую метод 1 (куки из браузера)...")
+    temp_dir1 = tempfile.mkdtemp(dir=TEMP_DIR)
+    video_path, title = download_video_method1(url, quality_key, temp_dir1)
+    if video_path:
+        return video_path, title, temp_dir1
+    shutil.rmtree(temp_dir1)
+    
+    # Метод 2
+    print("🔄 Пробую метод 2 (Android клиент)...")
+    temp_dir2 = tempfile.mkdtemp(dir=TEMP_DIR)
+    video_path, title = download_video_method2(url, quality_key, temp_dir2)
+    if video_path:
+        return video_path, title, temp_dir2
+    shutil.rmtree(temp_dir2)
+    
+    # Метод 3
+    print("🔄 Пробую метод 3 (cookies.txt)...")
+    temp_dir3 = tempfile.mkdtemp(dir=TEMP_DIR)
+    video_path, title = download_video_method3(url, quality_key, temp_dir3)
+    if video_path:
+        return video_path, title, temp_dir3
+    shutil.rmtree(temp_dir3)
     
     print("❌ Все методы скачивания не сработали")
-    shutil.rmtree(temp_dir)
     return None, None, None
 
-# ========== ОСТАЛЬНЫЕ ФУНКЦИИ БЕЗ ИЗМЕНЕНИЙ ==========
+# ========== ОСТАЛЬНЫЕ ФУНКЦИИ ==========
 def get_duration(file_path):
     """Получает длительность видео/аудио"""
     cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
@@ -308,7 +348,7 @@ async def yt_command(message: types.Message):
     video_path, title, temp_dir = download_video(url, quality)
     
     if not video_path:
-        await msg.edit_text("❌ Не удалось скачать видео. Возможно, YouTube заблокировал доступ.")
+        await msg.edit_text("❌ Не удалось скачать видео. YouTube требует подтверждения.")
         return
     
     if user_id not in user_videos:
@@ -424,6 +464,8 @@ async def process_files(message: types.Message, user_id: str):
 
 # ========== ЗАПУСК ==========
 if __name__ == '__main__':
-    print("🤖 BeatSync Clip Bot запущен")
-    print("📥 Режим скачивания: адаптирован под YouTube 2026")
+    print("🤖 BeatSync Clip Bot (3 метода) запущен")
+    print("📥 Метод 1: Куки из браузера")
+    print("📥 Метод 2: Android клиент")
+    print("📥 Метод 3: cookies.txt")
     executor.start_polling(dp, skip_updates=True)
