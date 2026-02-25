@@ -5,11 +5,14 @@ import subprocess
 import tempfile
 import shutil
 import json
+import asyncio
 from flask import Flask, request
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 import yt_dlp
 from dotenv import load_dotenv
+from hypercorn.asyncio import serve
+from hypercorn.config import Config
 
 load_dotenv()
 
@@ -17,6 +20,14 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
     print("❌ Ошибка: BOT_TOKEN не установлен!")
     sys.exit(1)
+
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+if not WEBHOOK_URL:
+    print("❌ Ошибка: WEBHOOK_URL не установлен! Должно быть https://твой-проект.railway.app")
+    sys.exit(1)
+
+WEBHOOK_PATH = '/webhook'
+PORT = int(os.getenv('PORT', 8080))
 
 # Настройки качества
 QUALITY_PRESETS = {
@@ -28,24 +39,20 @@ QUALITY_PRESETS = {
 
 DEFAULT_QUALITY = "720p"
 TEMP_DIR = "temp"
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # Например: https://твой-проект.railway.app
-WEBHOOK_PATH = '/webhook'
-PORT = int(os.getenv('PORT', 8080))
-
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Инициализация бота
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# Flask приложение
-app = Flask(__name__)
-
 # Хранилище пользовательских данных
 user_videos = {}
 user_audios = {}
 
-# ========== ФУНКЦИИ РАБОТЫ С ВИДЕО ==========
+# Flask приложение
+app = Flask(__name__)
+
+# ========== ФУНКЦИИ ==========
 def download_video(url, quality_key):
     """Скачивает видео с YouTube"""
     temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
@@ -384,9 +391,9 @@ async def process_files(message: types.Message, user_id: str):
 # ========== ВЕБХУК ==========
 @app.route(WEBHOOK_PATH, methods=['POST'])
 def webhook():
-    """Обрабатывает входящие обновления от Telegram"""
+    """Синхронная обёртка для асинхронной обработки"""
     update = types.Update(**request.json)
-    dp.process_update(update)
+    asyncio.run(dp.process_update(update))
     return 'ok', 200
 
 @app.route('/')
@@ -394,14 +401,19 @@ def index():
     return 'Бот работает!', 200
 
 # ========== ЗАПУСК ==========
+async def on_startup():
+    """Устанавливает вебхук при запуске"""
+    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+    await bot.set_webhook(webhook_url)
+    print(f"✅ Вебхук установлен на {webhook_url}")
+
+async def main():
+    await on_startup()
+    config = Config()
+    config.bind = [f"0.0.0.0:{PORT}"]
+    await serve(app, config)
+
 if __name__ == '__main__':
     print("🤖 BeatSync Clip Bot (Webhook) запущен")
     print(f"📡 Сервер слушает порт {PORT}")
-    
-    # Устанавливаем вебхук
-    webhook_url = f"{WEBHOOK_URL}{WEBHOOK_PATH}"
-    bot.set_webhook(webhook_url)
-    print(f"✅ Вебхук установлен на {webhook_url}")
-    
-    # Запускаем Flask
-    app.run(host='0.0.0.0', port=PORT)
+    asyncio.run(main())
