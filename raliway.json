@@ -1,6 +1,6 @@
 {
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "apt-get update && apt-get install -y ffmpeg curl && curl -fsSL https://deno.land/install.sh | sh && export PATH=\"/root/.deno/bin:$PATH\" && pip install --upgrade pip && pip install -r requirements.txt"
+    "buildCommand": "apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt"
   }
 }
