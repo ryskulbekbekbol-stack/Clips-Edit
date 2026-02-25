@@ -1,4 +1,4 @@
-aiogram==2.25.1
+aiogram==2.23.1
 yt-dlp
-opencv-python-headless==4.8.1.78
+opencv-python-headless==4.8.0.74
 python-dotenv==1.0.0
