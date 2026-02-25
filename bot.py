@@ -16,6 +16,22 @@ if not BOT_TOKEN:
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Проверяем FFmpeg при запуске
+def check_ffmpeg():
+    try:
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        print("✅ FFmpeg найден")
+        return True
+    except:
+        print("❌ FFmpeg НЕ найден!")
+        print("\n🔧 Как установить FFmpeg на Railway:")
+        print("1. Зайди в Variables своего проекта")
+        print("2. Добавь: RAILPACK_PACKAGES = ffmpeg")
+        print("3. Перезапусти деплой\n")
+        return False
+
+FFMPEG_OK = check_ffmpeg()
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
@@ -24,7 +40,6 @@ user_audios = {}
 
 # ========== ТРИ МЕТОДА ==========
 def download_method1(url, temp_dir):
-    """Метод 1: Android"""
     output = os.path.join(temp_dir, 'video.%(ext)s')
     ydl_opts = {
         'format': 'best[height<=720]',
@@ -44,7 +59,6 @@ def download_method1(url, temp_dir):
     return None, None
 
 def download_method2(url, temp_dir):
-    """Метод 2: Web"""
     output = os.path.join(temp_dir, 'video.%(ext)s')
     ydl_opts = {
         'format': 'best[height<=720]',
@@ -64,7 +78,6 @@ def download_method2(url, temp_dir):
     return None, None
 
 def download_method3(url, temp_dir):
-    """Метод 3: Любое"""
     output = os.path.join(temp_dir, 'video.mp4')
     ydl_opts = {
         'format': 'best',
@@ -81,7 +94,6 @@ def download_method3(url, temp_dir):
     return None, None
 
 def download_video(url):
-    """Пробует все три метода"""
     temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
     
     video_path, title = download_method1(url, temp_dir)
@@ -100,7 +112,6 @@ def download_video(url):
     return None, None, None
 
 def get_duration(file_path):
-    """Длительность"""
     try:
         cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -109,7 +120,6 @@ def get_duration(file_path):
         return 0
 
 def create_beats(duration):
-    """Биты"""
     beats = []
     interval = 0.5
     current = 0
@@ -118,89 +128,32 @@ def create_beats(duration):
         current += interval
     return beats
 
-def cut_video_simple(video_path, output_dir, num_parts=5):
-    """Простая нарезка на равные части если FFmpeg глючит"""
-    clips = []
-    duration = get_duration(video_path)
-    part_duration = duration / num_parts
-    
-    for i in range(num_parts):
-        start = i * part_duration
-        end = (i + 1) * part_duration
-        output = os.path.join(output_dir, f"clip_{i}.mp4")
-        cmd = [
-            'ffmpeg', '-i', video_path,
-            '-ss', str(start),
-            '-to', str(end),
-            '-c', 'copy',
-            '-an',
-            '-y',
-            output
-        ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True)
-            if os.path.exists(output):
-                clips.append(output)
-        except:
-            pass
-    return clips
-
 def cut_video(video_path, beats, output_dir):
-    """Нарезка по битам"""
+    if not FFMPEG_OK:
+        return []
+        
     clips = []
     duration = get_duration(video_path)
-    
-    # Проверяем FFmpeg
-    try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True)
-    except:
-        print("❌ FFmpeg не найден!")
-        return cut_video_simple(video_path, output_dir)
-    
     valid_beats = [b for b in beats if b < duration]
-    
-    if len(valid_beats) < 2:
-        return cut_video_simple(video_path, output_dir)
     
     for i in range(len(valid_beats)-1):
         start = valid_beats[i]
         end = valid_beats[i+1]
-        
         if end - start < 0.3:
             continue
-            
         output = os.path.join(output_dir, f"clip_{i}.mp4")
-        cmd = [
-            'ffmpeg', '-i', video_path,
-            '-ss', str(start),
-            '-to', str(end),
-            '-c', 'copy',
-            '-an',
-            '-y',
-            output
-        ]
-        
+        cmd = ['ffmpeg', '-i', video_path, '-ss', str(start), '-to', str(end), '-c', 'copy', '-an', '-y', output]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode == 0 and os.path.exists(output):
-                clips.append(output)
-            else:
-                print(f"FFmpeg ошибка: {result.stderr}")
-        except Exception as e:
-            print(f"Ошибка: {e}")
-    
-    # Если ни одного клипа не создалось - режем просто
-    if not clips:
-        print("⚠️ Использую простую нарезку")
-        return cut_video_simple(video_path, output_dir)
-    
+            subprocess.run(cmd, check=True, capture_output=True)
+            clips.append(output)
+        except:
+            pass
     return clips
 
 def merge_clips(clips, audio_path, output_path, clip_duration):
-    """Склейка"""
-    if not clips:
+    if not FFMPEG_OK or not clips:
         return None
-    
+        
     list_file = os.path.join(os.path.dirname(output_path), 'list.txt')
     with open(list_file, 'w') as f:
         for clip in clips:
@@ -216,12 +169,7 @@ def merge_clips(clips, audio_path, output_path, clip_duration):
         trim_cmd = ['ffmpeg', '-i', audio_path, '-t', str(clip_duration), '-c', 'copy', '-y', trimmed]
         subprocess.run(trim_cmd, check=True, capture_output=True)
         
-        final_cmd = [
-            'ffmpeg', '-i', merged, '-i', trimmed,
-            '-c:v', 'copy', '-c:a', 'aac',
-            '-map', '0:v:0', '-map', '1:a:0',
-            '-shortest', '-y', output_path
-        ]
+        final_cmd = ['ffmpeg', '-i', merged, '-i', trimmed, '-c:v', 'copy', '-c:a', 'aac', '-map', '0:v:0', '-map', '1:a:0', '-shortest', '-y', output_path]
         subprocess.run(final_cmd, check=True, capture_output=True)
         
         os.remove(merged)
@@ -233,7 +181,9 @@ def merge_clips(clips, audio_path, output_path, clip_duration):
         return None
 
 def compress_video(input_path):
-    """Сжатие"""
+    if not FFMPEG_OK:
+        return input_path
+        
     size = os.path.getsize(input_path) / 1024 / 1024
     if size <= 45:
         return input_path
@@ -247,7 +197,10 @@ def compress_video(input_path):
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    await message.reply("/yt ссылка секунд\nПотом аудио")
+    text = "/yt ссылка секунд\nПотом аудио"
+    if not FFMPEG_OK:
+        text += "\n\n⚠️ FFmpeg не установлен! Добавь RAILPACK_PACKAGES=ffmpeg в Variables"
+    await message.reply(text)
 
 @dp.message_handler(commands=['yt'])
 async def yt_command(message: types.Message):
@@ -275,7 +228,7 @@ async def yt_command(message: types.Message):
         await msg.edit_text("❌ Не скачалось")
         return
     
-    await message.reply(f"✅ Видео скачано")
+    await message.reply("✅ Видео скачано")
     
     user_videos[user_id] = {
         'path': video_path,
@@ -311,6 +264,10 @@ async def handle_audio(message: types.Message):
         await msg.edit_text("✅ Аудио есть, кидай /yt")
 
 async def process_files(message: types.Message, user_id: str):
+    if not FFMPEG_OK:
+        await message.reply("❌ FFmpeg не установлен! Добавь RAILPACK_PACKAGES=ffmpeg в Variables")
+        return
+        
     video_info = user_videos[user_id]
     audio_info = user_audios[user_id]
     clip_duration = video_info['duration']
@@ -324,7 +281,7 @@ async def process_files(message: types.Message, user_id: str):
     clips = cut_video(video_info['path'], beats, work_dir)
     
     if not clips:
-        await msg.edit_text("❌ Не порезалось. FFmpeg есть?")
+        await msg.edit_text("❌ Не порезалось")
         return
     
     await msg.edit_text(f"🔄 Склеиваю {len(clips)} кусков...")
@@ -344,7 +301,6 @@ async def process_files(message: types.Message, user_id: str):
     with open(result, 'rb') as f:
         await message.reply_video(f, caption=f"✅ {clip_duration} сек, {len(clips)} кусков")
     
-    # Чистим
     shutil.rmtree(work_dir)
     shutil.rmtree(video_info['temp_dir'])
     shutil.rmtree(audio_info['temp_dir'])
